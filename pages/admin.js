@@ -64,6 +64,7 @@ import OverviewTab from "../components/Admin/OverviewTab";
 import SecurityTab from "../components/Admin/SecurityTab";
 import SettingsTab from "../components/Admin/SettingsTab";
 import UsersTab from "../components/Admin/UsersTab";
+import LoanApprovalsTab from "../components/Admin/LoanApprovalsTab";
 
 const Admin = () => {
   const { address, isConnected } = useAccount();
@@ -464,6 +465,7 @@ const Admin = () => {
 
   const tabs = [
     { id: "overview", name: "Overview", icon: FiBarChart },
+    { id: "loans", name: "Loan Approvals", icon: FiDollarSign },
     { id: "kyc", name: "KYC Review", icon: FiShield },
     { id: "settings", name: "Platform Settings", icon: FiSettings },
     { id: "security", name: "Security", icon: FiLock },
@@ -933,6 +935,18 @@ const Admin = () => {
                     recentActivity={adminData.recentActivity}
                     systemHealth={adminData.systemHealth}
                   />
+                </motion.div>
+              )}
+
+              {activeTab === "loans" && (
+                <motion.div
+                  key="loans"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <LoanApprovalsTab />
                 </motion.div>
               )}
 

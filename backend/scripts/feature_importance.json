@@ -1,23 +1,23 @@
 [
   {
     "feature":"loan_duration_days",
-    "importance":0.3705373704
+    "importance":0.3720343113
   },
   {
     "feature":"ltv",
-    "importance":0.3303904235
+    "importance":0.3292095065
   },
   {
     "feature":"collateral_value",
-    "importance":0.1088674441
-  },
-  {
-    "feature":"loan_amount",
-    "importance":0.0974784195
+    "importance":0.1033392102
   },
   {
     "feature":"repayment_ratio",
-    "importance":0.0927262604
+    "importance":0.0990988314
+  },
+  {
+    "feature":"loan_amount",
+    "importance":0.0963180959
   },
   {
     "feature":"previous_defaults",

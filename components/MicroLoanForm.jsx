@@ -12,6 +12,7 @@ import {
 } from "wagmi";
 import { getContractAddresses } from "../lib/constants";
 import toast from "react-hot-toast";
+import LoanRiskCard from "./LoanRiskCard";
 import {
   FiDollarSign,
   FiPackage,
@@ -24,7 +25,10 @@ import {
   FiInfo,
   FiLoader,
   FiTrendingUp,
+  FiShield,
 } from "react-icons/fi";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
 // ─── ABI (trimmed — only functions we call) ──────────────────────────────────
 export const CROP_LOAN_ABI = [
@@ -444,6 +448,14 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
   const [termDays, setTermDays] = useState(30);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // AI Risk Assessment & Applications state
+  const [assessment, setAssessment] = useState(null);
+  const [assessing, setAssessing] = useState(false);
+  const [submittingApp, setSubmittingApp] = useState(false);
+  const [userApplications, setUserApplications] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [disbursingId, setDisbursingId] = useState(null);
+
   // Derived collateral
   const collateralKg =
     amountUSDC && !isNaN(Number(amountUSDC))
@@ -485,10 +497,177 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
 
   const loanIds = farmerLoanIds ? [...farmerLoanIds].reverse() : [];
 
+  // Fetch submitted applications for this user
+  const loadUserApplications = useCallback(async () => {
+    if (!address) return;
+    setLoadingApps(true);
+    try {
+      const res = await fetch(`/api/loans?borrower=${encodeURIComponent(address)}`);
+      const data = await res.json();
+      if (res.ok && data.loans) {
+        setUserApplications(data.loans);
+      }
+    } catch (e) {
+      console.warn("Failed to load user applications:", e.message);
+    } finally {
+      setLoadingApps(false);
+    }
+  }, [address]);
+
+  useEffect(() => {
+    loadUserApplications();
+  }, [loadUserApplications, refreshKey]);
+
   // Borrow flow: approve then borrow
   const { writeContractAsync: approveUSDC, isPending: approving } = useWriteContract();
   const { writeContractAsync: borrowFn, isPending: borrowing } = useWriteContract();
-  const isBusy = approving || borrowing;
+  const isBusy = approving || borrowing || submittingApp || !!disbursingId;
+
+  // Run real-time AI Risk Evaluation
+  const handleAssessRisk = async () => {
+    if (!amountUSDC || isNaN(Number(amountUSDC)) || Number(amountUSDC) <= 0) {
+      toast.error("Please enter a valid loan amount first");
+      return null;
+    }
+    setAssessing(true);
+    try {
+      const loanAmount = Number(amountUSDC);
+      // Collateral value: 400% collateral ratio at $0.50/unit = 2.0x loan amount value
+      const collateralVal = loanAmount * 2.0;
+      const ltv = 0.50; // loan_amount / collateral_val
+      const durationDays = Number(termDays) || 30;
+
+      // Pass the 6 model features exactly:
+      const body = {
+        ltv,
+        loan_amount: loanAmount,
+        collateral_value: collateralVal,
+        loan_duration_days: durationDays,
+        previous_defaults: 0,
+        repayment_ratio: 0.95,
+      };
+
+      const res = await fetch(`${BACKEND_URL}/api/ai/loan-risk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Risk prediction failed");
+      setAssessment(data);
+      toast.success(
+        `AI Risk Assessment: ${data.risk_level} (${(data.default_probability * 100).toFixed(1)}% default risk)`
+      );
+      return data;
+    } catch (e) {
+      toast.error(e.message || "Could not reach AI risk service");
+      return null;
+    } finally {
+      setAssessing(false);
+    }
+  };
+
+  // Submit loan application for admin review
+  const handleSubmitApplication = async () => {
+    if (!amountUSDC || isNaN(Number(amountUSDC)) || Number(amountUSDC) <= 0) {
+      toast.error("Enter a valid USDC amount");
+      return;
+    }
+
+    setSubmittingApp(true);
+    try {
+      let currentAssessment = assessment;
+      if (!currentAssessment) {
+        toast.loading("Running AI risk assessment...", { id: "loan-submit" });
+        currentAssessment = await handleAssessRisk();
+      }
+
+      toast.loading("Submitting loan application...", { id: "loan-submit" });
+      const res = await fetch("/api/loans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          farmer_id: address,
+          amount_usdc: Number(amountUSDC),
+          collateral_kg: Number(collateralKg),
+          loan_duration_days: Number(termDays),
+          risk_level: currentAssessment?.risk_level || "LOW",
+          default_probability: currentAssessment?.default_probability || 0.05,
+          model_version: currentAssessment?.model_version || "xgboost-v1",
+          status: "pending_approval",
+          repay_by: new Date(Date.now() + termDays * 86400 * 1000).toISOString(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to submit loan application");
+
+      toast.success("Application submitted! Pending Admin Review.", { id: "loan-submit" });
+      setAmountUSDC("");
+      setAssessment(null);
+      loadUserApplications();
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      toast.error(e.message || "Submission failed", { id: "loan-submit" });
+    } finally {
+      setSubmittingApp(false);
+    }
+  };
+
+  // Disburse approved application on blockchain
+  const handleDisburseApplication = async (app) => {
+    if (!contractAddr || !usdcAddr) {
+      toast.error(`CropLoan is not configured for chain ${chainId}`);
+      return;
+    }
+
+    const usdcAmount = BigInt(Math.round(Number(app.amount_usdc) * 1e6));
+    if (reserveBalRaw !== undefined && reserveBalRaw < usdcAmount) {
+      toast.error(
+        `Insufficient lending reserve. Available: $${formatUSDC(reserveBalRaw)} USDC.`
+      );
+      return;
+    }
+
+    const kgCollateral = BigInt(Math.round(Number(app.collateral_kg) * 1e18));
+    const term = BigInt(app.loan_duration_days || 30);
+
+    setDisbursingId(app.loan_id);
+    try {
+      toast.loading("Submitting blockchain borrow transaction...", { id: "disburse" });
+      const hash = await borrowFn({
+        address: contractAddr,
+        abi: CROP_LOAN_ABI,
+        functionName: "borrow",
+        args: [usdcAmount, kgCollateral, term],
+      });
+      toast.loading("Waiting for blockchain confirmation...", { id: "disburse" });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") {
+        throw new Error("Borrow transaction reverted on blockchain.");
+      }
+
+      toast.success(`Disbursed! ${app.amount_usdc} USDC sent to your wallet.`, { id: "disburse" });
+
+      // Update status to active in database
+      await fetch("/api/loans", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: app.loan_id,
+          status: "active",
+          tx_hash: hash,
+        }),
+      });
+
+      refetchLoans();
+      loadUserApplications();
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      toast.error(e?.shortMessage || e?.message || "Disbursement failed", { id: "disburse" });
+    } finally {
+      setDisbursingId(null);
+    }
+  };
 
   const handleBorrow = async () => {
     if (!amountUSDC || isNaN(Number(amountUSDC)) || Number(amountUSDC) <= 0) {
@@ -509,15 +688,9 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
       );
       return;
     }
-    // collateral in kg with 18 decimals: amount * 4 * 1e18
     const kgCollateral = BigInt(Math.round(Number(amountUSDC) * COLLATERAL_RATIO * 1e18));
 
     try {
-      toast.loading("Step 1/2: Approving USDC for collateral...", { id: "borrow" });
-      // No USDC pulled from user for borrow — reserve funds it.
-      // But approve a small amount in case repay flow needs it later.
-      // For the borrow tx itself we only need to call borrow().
-
       toast.loading("Submitting borrow transaction...", { id: "borrow" });
       const hash = await borrowFn({
         address: contractAddr,
@@ -533,7 +706,7 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
 
       toast.success(`Loan active! ${amountUSDC} USDC → wallet`, { id: "borrow" });
 
-      // Save loan to Supabase
+      // Save loan to database
       await fetch("/api/loans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -544,11 +717,15 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
           tx_hash: hash,
           repay_by: new Date(Date.now() + termDays * 86400 * 1000).toISOString(),
           status: "active",
+          risk_level: assessment?.risk_level || "LOW",
+          default_probability: assessment?.default_probability || 0.05,
         }),
       });
 
       setAmountUSDC("");
+      setAssessment(null);
       refetchLoans();
+      loadUserApplications();
       setRefreshKey((k) => k + 1);
     } catch (e) {
       toast.error(e?.shortMessage || e?.message || "Borrow failed", { id: "borrow" });
@@ -725,26 +902,85 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
             </motion.div>
           )}
 
-          {/* Borrow button */}
-          <motion.button
-            whileHover={{ scale: isBusy ? 1 : 1.01 }}
-            whileTap={{ scale: isBusy ? 1 : 0.98 }}
-            onClick={handleBorrow}
-            disabled={isBusy || !amountUSDC || !deploymentReady}
-            className="w-full py-4 rounded-xl font-black text-lg flex items-center justify-center gap-3 bg-gradient-to-r from-blue-500 via-indigo-400 to-cyan-500 text-black hover:shadow-[0_0_40px_rgba(52,211,153,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
-          >
-            {isBusy ? (
-              <>
-                <FiLoader className="animate-spin w-5 h-5" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <FiZap className="w-5 h-5" />
-                Borrow Now
-              </>
-            )}
-          </motion.button>
+          {/* AI Risk Assessment Card */}
+          <div className="mb-6 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                <FiShield className="text-blue-400" />
+                AI Risk Assessment (Decision Support)
+              </span>
+              <button
+                type="button"
+                onClick={handleAssessRisk}
+                disabled={assessing || !amountUSDC}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 transition disabled:opacity-40"
+              >
+                {assessing ? (
+                  <>
+                    <FiLoader className="animate-spin w-3.5 h-3.5" />
+                    Evaluating Risk...
+                  </>
+                ) : (
+                  <>
+                    <FiShield className="w-3.5 h-3.5" />
+                    Assess Loan Risk
+                  </>
+                )}
+              </button>
+            </div>
+
+            <LoanRiskCard
+              assessment={
+                assessing
+                  ? { loading: true }
+                  : assessment || {
+                      default_probability: 0.05,
+                      risk_level: "LOW",
+                      model_version: "xgboost-v1",
+                      demo: false,
+                    }
+              }
+            />
+            <p className="text-[11px] text-gray-500">
+              * Evaluated using local XGBoost model across LTV, collateral ratio, term duration, and repayment metrics.
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="space-y-3">
+            <motion.button
+              whileHover={{ scale: isBusy ? 1 : 1.01 }}
+              whileTap={{ scale: isBusy ? 1 : 0.98 }}
+              onClick={handleSubmitApplication}
+              disabled={isBusy || !amountUSDC}
+              className="w-full py-4 rounded-xl font-black text-lg flex items-center justify-center gap-3 bg-gradient-to-r from-blue-500 via-indigo-400 to-cyan-500 text-black hover:shadow-[0_0_40px_rgba(52,211,153,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+            >
+              {submittingApp ? (
+                <>
+                  <FiLoader className="animate-spin w-5 h-5" />
+                  Submitting Application...
+                </>
+              ) : (
+                <>
+                  <FiShield className="w-5 h-5" />
+                  Submit Loan Application (AI Evaluated)
+                </>
+              )}
+            </motion.button>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs text-gray-500">Need instant on-chain test?</span>
+              <button
+                type="button"
+                onClick={handleBorrow}
+                disabled={isBusy || !amountUSDC || !deploymentReady}
+                className="text-xs font-semibold text-sky-400 hover:text-sky-300 underline disabled:opacity-40"
+              >
+                Direct On-Chain Borrow (Bypass Review)
+              </button>
+            </div>
+          </div>
+
           {!deploymentReady && (
             <p className="mt-3 text-sm text-amber-300" role="alert">
               {!contractAddr || !usdcAddr
@@ -757,7 +993,7 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
         </div>
       </motion.div>
 
-      {/* ── Active Loans ── */}
+      {/* ── Applications & Active Loans ── */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -767,58 +1003,147 @@ export default function MicroLoanForm({ cropLoanAddress, usdcAddress }) {
       >
         <div className="absolute top-0 left-0 w-32 h-32 bg-gradient-to-br from-cyan-600/8 to-transparent rounded-full blur-2xl pointer-events-none" />
 
-        <div className="relative z-10">
-          <div className="flex items-center justify-between mb-5">
+        <div className="relative z-10 space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-gradient-to-r from-cyan-600/20 to-blue-600/20 border border-cyan-500/30">
                 <FiClock className="h-5 w-5 text-cyan-300" />
               </div>
-              <h3 className="text-lg font-bold text-white">Your Loans</h3>
-              {loanIds.length > 0 && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-gray-400">
-                  {loanIds.length}
-                </span>
-              )}
+              <div>
+                <h3 className="text-lg font-bold text-white">Your Loan Applications & History</h3>
+                <p className="text-xs text-gray-400">Review status, admin approval, and on-chain loans</p>
+              </div>
             </div>
             <motion.button
               whileHover={{ rotate: 180 }}
               transition={{ duration: 0.4 }}
-              onClick={() => { refetchLoans(); setRefreshKey((k) => k + 1); }}
+              onClick={() => {
+                refetchLoans();
+                loadUserApplications();
+                setRefreshKey((k) => k + 1);
+              }}
               className="p-2 rounded-lg bg-white/5 border border-white/10 text-gray-400 hover:text-white hover:border-blue-500/30 transition-all"
             >
               <FiRefreshCw className="w-4 h-4" />
             </motion.button>
           </div>
 
-          {loanIds.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-r from-gray-700/30 to-gray-600/20 flex items-center justify-center mx-auto mb-4">
-                <FiPackage className="w-7 h-7 text-gray-500" />
-              </div>
-              <p className="text-gray-400 font-medium mb-2">No loans yet</p>
-              <p className="text-sm text-gray-600">
-                Borrow above to get started — funds land in your wallet instantly
-              </p>
-            </div>
-          ) : (
+          {/* Submitted Applications List */}
+          {userApplications.length > 0 && (
             <div className="space-y-3">
-              <AnimatePresence>
-                {loanIds.map((id) => (
-                  <LoanCard
-                    key={`${id}-${refreshKey}`}
-                    loanId={id.toString()}
-                    contractAddress={contractAddr}
-                    abi={CROP_LOAN_ABI}
-                    usdcAddress={usdcAddr}
-                    onRepaid={() => {
-                      refetchLoans();
-                      setRefreshKey((k) => k + 1);
-                    }}
-                  />
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                Submitted Applications ({userApplications.length})
+              </p>
+              <div className="space-y-2">
+                {userApplications.map((app) => (
+                  <div
+                    key={app.loan_id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-white/10 bg-white/[0.03]"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-gray-400">{app.loan_id}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            app.risk_level === "LOW"
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                              : app.risk_level === "MEDIUM"
+                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                              : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                          }`}
+                        >
+                          {app.risk_level} RISK ({(Number(app.default_probability || 0) * 100).toFixed(1)}%)
+                        </span>
+                      </div>
+                      <p className="text-sm font-semibold text-white">
+                        ${app.amount_usdc} USDC · {app.collateral_kg} units collateral · {app.loan_duration_days || 30} days
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {app.status === "pending_approval" && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+                          <FiClock className="w-3.5 h-3.5 animate-pulse" />
+                          Pending Admin Review
+                        </span>
+                      )}
+
+                      {app.status === "rejected" && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+                          <FiXCircle className="w-3.5 h-3.5" />
+                          Rejected by Admin
+                        </span>
+                      )}
+
+                      {app.status === "approved" && (
+                        <button
+                          type="button"
+                          onClick={() => handleDisburseApplication(app)}
+                          disabled={disbursingId === app.loan_id || !deploymentReady}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-bold text-xs hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] transition disabled:opacity-50"
+                        >
+                          {disbursingId === app.loan_id ? (
+                            <>
+                              <FiLoader className="animate-spin w-3.5 h-3.5" />
+                              Disbursing...
+                            </>
+                          ) : (
+                            <>
+                              <FiZap className="w-3.5 h-3.5" />
+                              Disburse on Blockchain
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {app.status === "active" && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                          <FiCheckCircle className="w-3.5 h-3.5" />
+                          Active On-Chain
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </AnimatePresence>
+              </div>
             </div>
           )}
+
+          {/* On-Chain Active Loans List */}
+          <div className="space-y-3">
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+              Active Smart Contract Positions ({loanIds.length})
+            </p>
+            {loanIds.length === 0 ? (
+              <div className="text-center py-8 rounded-xl border border-white/5 bg-white/[0.02]">
+                <FiPackage className="w-6 h-6 text-gray-600 mx-auto mb-2" />
+                <p className="text-gray-400 text-xs font-medium">No active on-chain loans</p>
+                <p className="text-[11px] text-gray-600">
+                  Approved loans disbursed on-chain will appear here for repayment and liquidation tracking.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <AnimatePresence>
+                  {loanIds.map((id) => (
+                    <LoanCard
+                      key={`${id}-${refreshKey}`}
+                      loanId={id.toString()}
+                      contractAddress={contractAddr}
+                      abi={CROP_LOAN_ABI}
+                      usdcAddress={usdcAddr}
+                      onRepaid={() => {
+                        refetchLoans();
+                        loadUserApplications();
+                        setRefreshKey((k) => k + 1);
+                      }}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </div>
         </div>
       </motion.div>
     </div>

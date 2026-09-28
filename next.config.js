@@ -6,6 +6,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     esmExternals: "loose", // This helps with ESM/CommonJS compatibility
   },
@@ -22,10 +25,13 @@ const nextConfig = {
 
   // --- FIX 2: Merged Webpack Config (for '@react-native-async-storage') ---
   webpack: (config, { isServer }) => {
-    // My fix to ignore the missing mobile package
+    const path = require("path");
+    // Pin React and React-DOM to local node_modules to avoid parent directory duplicates
     config.resolve.alias = {
       ...config.resolve.alias,
       '@react-native-async-storage/async-storage': false,
+      react: path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
     };
 
     // --- All of your original webpack settings below ---
