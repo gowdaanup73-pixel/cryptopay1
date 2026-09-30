@@ -10,8 +10,8 @@ DO $$ BEGIN CREATE TYPE kyc_status_enum    AS ENUM ('NOT_STARTED', 'IN_PROGRESS'
 
 -- ── Users table ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
-  wallet_address  VARCHAR(42) PRIMARY KEY,           -- 0x-prefixed, checksummed
-  nonce           VARCHAR(64) NOT NULL,               -- random nonce for SIWE-style login
+  wallet_address  VARCHAR(42) PRIMARY KEY,           
+  nonce           VARCHAR(64) NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
