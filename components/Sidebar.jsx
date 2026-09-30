@@ -39,7 +39,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
     { name: "Payments",       href: "/payments",     icon: FiCreditCard },
     { name: "KYC Management", href: "/kyc",          icon: FiShield },
     { name: "Loans",          href: "/loans",        icon: FiDollarSign },
-    { name: "Loan Risk AI",   href: "/ai-analytics", icon: FiTrendingUp },
+    { name: "AI Model Metrics", href: "/ai-analytics", icon: FiTrendingUp },
     { name: "Analytics",      href: "/analytics",    icon: FiBarChart },
     { name: "Transactions",   href: "/transactions", icon: FiFileText },
     { name: "Transfer Funds", href: "/transfer",     icon: FiSend },

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
 import { FiActivity, FiBarChart2, FiBriefcase, FiClock, FiCpu, FiDollarSign, FiRefreshCw, FiShield, FiTrendingUp } from "react-icons/fi";
-import LoanRiskCard from "./LoanRiskCard";
+import InstallmentPredictionCard from "./InstallmentPredictionCard";
 import MicroLoanForm from "./MicroLoanForm";
 
 const SECTIONS = [
@@ -11,8 +11,8 @@ const SECTIONS = [
   ["borrow", "Borrow", FiDollarSign],
   ["lend", "Lend & Earn", FiTrendingUp],
   ["history", "History", FiClock],
-  ["crop", "Crop Loans", FiActivity],
-  ["risk", "AI Risk", FiCpu],
+  ["crop", "Loan position", FiActivity],
+  ["model", "AI Model", FiCpu],
 ];
 
 const ASSETS = [
@@ -61,7 +61,7 @@ function Overview({ setSection }) {
           <h3 className="font-semibold text-white">Position health</h3>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full w-[72%] rounded-full bg-emerald-400" /></div>
           <div className="mt-2 flex justify-between text-xs text-gray-500"><span>Liquidation 1.0</span><span>Warning 1.5</span><span>Sample: 4.8</span></div>
-          <p className="mt-4 text-sm text-gray-400">This overview uses example values from the supplied loan-settings demo. Your on-chain Crop Loan position is shown in Crop Loans.</p>
+          <p className="mt-4 text-sm text-gray-400">This overview uses example values from the supplied loan-settings demo. Your on-chain loan position is shown in the loan section.</p>
         </Panel>
         <Panel>
           <h3 className="font-semibold text-white">Estimated yield</h3>
@@ -113,8 +113,8 @@ function BorrowTools({ prices, setSection }) {
           </div>
           {action === "borrow" && <label className="mt-4 block space-y-2 text-sm text-gray-400">Repayment term: {term} months<input type="range" min="1" max="12" value={term} onChange={(event) => setTerm(Number(event.target.value))} className="w-full accent-sky-400" /></label>}
           <div className="mt-5 grid gap-3 sm:grid-cols-3"><Metric label="Collateral value" value={`$${collateralValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} /><Metric label="Indicative borrow limit" value={`$${borrowLimit.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} /><Metric label="Est. monthly payment" value={`$${monthlyPayment.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} /></div>
-          <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] p-3 text-sm text-amber-100">Preview only. Use Crop Loans below for the app’s existing on-chain loan flow.</div>
-          <button type="button" onClick={() => setSection("crop")} className="mt-4 rounded-lg bg-sky-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-sky-300">Open Crop Loans</button>
+          <div className="mt-4 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] p-3 text-sm text-amber-100">Preview only. Use the loan section below for the app’s existing on-chain loan flow.</div>
+          <button type="button" onClick={() => setSection("crop")} className="mt-4 rounded-lg bg-sky-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-sky-300">Open loan position</button>
         </Panel>
       </div>
       <Panel className="h-fit"><h3 className="font-semibold text-white">Sample position</h3><div className="mt-4 space-y-3 text-sm"><div className="flex justify-between text-gray-400"><span>Collateral</span><span className="text-white">$27,200</span></div><div className="flex justify-between text-gray-400"><span>Borrowed</span><span className="text-white">$4,500</span></div><div className="flex justify-between text-gray-400"><span>Health factor</span><span className="text-emerald-300">4.80 · Safe</span></div><div className="flex justify-between text-gray-400"><span>Indicative APR</span><span className="text-white">5.1%</span></div></div><p className="mt-4 border-t border-white/10 pt-4 text-xs text-gray-500">Values shown here are samples; they are not read from your wallet or a lending protocol.</p></Panel>
@@ -170,33 +170,33 @@ function LoanHistory({ address }) {
   );
 }
 
-function RiskPrediction() {
-  const [features, setFeatures] = useState({ ltv: 0.5, loan_amount: 1000, collateral_value: 2000, loan_duration_days: 90, previous_defaults: 0, repayment_ratio: 0.95 });
+function InstallmentPrediction() {
+  const [features, setFeatures] = useState({ credit_limit: 20000, age: 35, latest_payment_status: 0, average_prior_payment_status: 0, average_bill_amount: 15000, average_payment_amount: 3000 });
   const [assessment, setAssessment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const fields = [["ltv", "Loan-to-value ratio", 0.01], ["loan_amount", "Loan amount (USD)", 1], ["collateral_value", "Collateral value (USD)", 1], ["loan_duration_days", "Duration (days)", 1], ["previous_defaults", "Previous defaults", 1], ["repayment_ratio", "Repayment ratio (0–1)", 0.01]];
+  const fields = [["credit_limit", "Credit limit (NT$)", 1000, 10000, 1000000], ["age", "Age (21 to 79)", 1, 21, 79], ["latest_payment_status", "Latest payment status (-2 to 8)", 1, -2, 8], ["average_prior_payment_status", "Average prior payment status", 0.1, -2, 8], ["average_bill_amount", "Average monthly bill (NT$)", 1000, -200000, 2000000], ["average_payment_amount", "Average monthly payment (NT$)", 1000, 0, 2000000]];
   const submit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${BACKEND_URL}/api/ai/loan-risk`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(Object.entries(features).map(([key, value]) => [key, Number(value)]))) });
+      const response = await fetch(`${BACKEND_URL}/api/ai/credit-default-risk`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(Object.entries(features).map(([key, value]) => [key, Number(value)]))) });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Risk prediction failed.");
+      if (!response.ok) throw new Error(result.error || "Installment prediction failed.");
       setAssessment(result);
     } catch (requestError) {
-      setAssessment({ unavailable: true });
+      setAssessment({ error: requestError.message || "Could not reach the prediction service." });
       setError(requestError.message || "Could not reach the prediction service.");
     } finally { setLoading(false); }
   };
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-bold text-white">AI loan-risk prediction</h2><p className="mt-1 text-sm text-gray-400">Estimate default probability from loan and repayment details.</p></div><Link href="/ai-analytics" className="text-sm font-semibold text-sky-300 hover:text-sky-200">View model analytics</Link></div>
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Credit-default model</h2><p className="mt-1 text-sm text-gray-400">Research demo trained on UCI credit-card repayment data; benchmark accuracy is about 79%.</p></div><Link href="/ai-analytics" className="text-sm font-semibold text-sky-300 hover:text-sky-200">View evaluation metrics</Link></div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]">
-        <Panel><form onSubmit={submit} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2">{fields.map(([key, label, step]) => <label key={key} className="space-y-2 text-sm text-gray-400">{label}<input type="number" min="0" max={key === "repayment_ratio" ? 1 : undefined} step={step} required value={features[key]} onChange={(event) => setFeatures((current) => ({ ...current, [key]: event.target.value }))} className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-3 text-white" /></label>)}</div><button type="submit" disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-sky-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-sky-300 disabled:opacity-50"><FiShield />{loading ? "Assessing..." : "Assess loan risk"}</button>{error && <p role="alert" className="text-sm text-amber-200">{error}</p>}</form></Panel>
-        <div className="space-y-3"><LoanRiskCard assessment={loading ? { loading: true } : assessment} /><p className="text-xs text-gray-500">Prediction is decision support only and should not be used as the sole basis for lending decisions.</p></div>
+        <Panel><form onSubmit={submit} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2">{fields.map(([key, label, step, min, max]) => <label key={key} className="space-y-2 text-sm text-gray-400">{label}<input type="number" min={min} max={max} step={step} required value={features[key]} onChange={(event) => setFeatures((current) => ({ ...current, [key]: event.target.value }))} className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-3 text-white" /></label>)}</div><button type="submit" disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-sky-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-sky-300 disabled:opacity-50"><FiCpu />{loading ? "Evaluating..." : "Estimate default risk"}</button>{error && <p role="alert" className="text-sm text-amber-200">{error}</p>}</form></Panel>
+        <div className="space-y-3"><InstallmentPredictionCard assessment={loading ? { loading: true } : assessment} /><p className="text-xs text-gray-500">This benchmark prediction is for model demonstration only. It is not based on the connected wallet or CryptoPay payment history.</p></div>
       </div>
     </div>
   );
@@ -226,7 +226,7 @@ export default function LoanFeaturesHub() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><h1 className="text-3xl font-bold text-white">Loans</h1><p className="mt-1 text-gray-400">Loan dashboard, markets, earnings, activity, and risk tools.</p></div>
+        <div><h1 className="text-3xl font-bold text-white">Loans</h1><p className="mt-1 text-gray-400">Loan dashboard, markets, earnings, activity, and model demos.</p></div>
         <Link href="/ai-analytics" className="inline-flex items-center gap-2 rounded-lg border border-sky-400/25 bg-sky-400/10 px-3 py-2 text-sm font-semibold text-sky-200 hover:bg-sky-400/15"><FiCpu />Prediction analytics</Link>
       </div>
       <div role="tablist" aria-label="Loan tools" className="flex gap-2 overflow-x-auto border-b border-white/10 pb-2">
@@ -237,8 +237,8 @@ export default function LoanFeaturesHub() {
       {section === "borrow" && <BorrowTools prices={prices} setSection={setSection} />}
       {section === "lend" && <LendEstimates />}
       {section === "history" && <LoanHistory address={address} />}
-      {section === "crop" && <div className="space-y-5"><div><h2 className="text-xl font-bold text-white">On-chain Crop Loans</h2><p className="mt-1 text-sm text-gray-400">The existing wallet-connected loan form is preserved here.</p></div><MicroLoanForm /></div>}
-      {section === "risk" && <RiskPrediction />}
+      {section === "crop" && <div className="space-y-5"><div><h2 className="text-xl font-bold text-white">On-chain loans</h2><p className="mt-1 text-sm text-gray-400">The existing wallet-connected loan form is preserved here.</p></div><MicroLoanForm /></div>}
+      {section === "model" && <InstallmentPrediction />}
     </div>
   );
 }

@@ -2,22 +2,36 @@ import { spawn } from "child_process";
 import { createInterface } from "readline";
 import path from "path";
 
-export interface LoanRiskFeatures {
-  ltv: number;
-  loan_amount: number;
-  collateral_value: number;
-  loan_duration_days: number;
-  previous_defaults: number;
-  repayment_ratio: number;
+export interface CreditDefaultFeatures {
+  credit_limit: number;
+  age: number;
+  latest_payment_status: number;
+  average_prior_payment_status: number;
+  average_bill_amount: number;
+  average_payment_amount: number;
 }
 
-export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+export interface CustomLoanFeatures {
+  amount_usdc: number;
+  collateral_kg: number;
+  collateral_ratio: number;
+  term_days: number;
+  repayment_history_score: number;
+  days_to_deadline: number;
+  late_payment_count: number;
+  previous_repayments: number;
+  liquidity_buffer: number;
+}
+
+export type LoanRiskFeatures = CreditDefaultFeatures | CustomLoanFeatures | Record<string, number>;
 
 interface WorkerResponse {
   ready?: boolean;
   error?: string;
   default_probability?: number;
+  predicted_outcome?: "no_default" | "default";
   model_version?: string;
+  decision_threshold?: number;
 }
 
 type WorkerStatus = "starting" | "ready" | "failed";
@@ -30,7 +44,7 @@ const worker = spawn(pythonExecutable, [path.join(scriptDirectory, "loan-risk-wo
 
 let workerStatus: WorkerStatus = "starting";
 let workerError = "AI model worker is unavailable";
-let modelVersion = "xgboost-v1";
+let modelVersion = "uci-credit-default-xgboost-v1";
 const startupWaiters: Array<() => void> = [];
 const pendingRequests: Array<{
   resolve: (response: WorkerResponse) => void;
@@ -90,55 +104,36 @@ function waitForWorker(): Promise<void> {
   return new Promise((resolve) => startupWaiters.push(resolve));
 }
 
-function riskLevelFor(probability: number): RiskLevel {
-  if (probability < 0.3) return "LOW";
-  if (probability <= 0.6) return "MEDIUM";
-  return "HIGH";
-}
-
-function demoProbability(features: LoanRiskFeatures): number {
-  const score =
-    -2.5 +
-    Math.max(0, features.ltv - 0.25) * 3.2 +
-    Math.max(0, features.loan_duration_days - 30) * 0.012 +
-    Math.log1p(features.loan_amount) * 0.08 +
-    features.previous_defaults * 0.8 -
-    features.repayment_ratio * 0.35;
-  return 1 / (1 + Math.exp(-score));
-}
-
 export async function predictLoanRisk(features: LoanRiskFeatures) {
-  try {
-    await waitForWorker();
-    if (workerStatus !== "ready") throw new Error(workerError);
-
-    const response = await new Promise<WorkerResponse>((resolve, reject) => {
-      pendingRequests.push({ resolve, reject });
-      worker.stdin.write(`${JSON.stringify(features)}\n`, (error) => {
-        if (error) {
-          const pending = pendingRequests.pop();
-          pending?.reject(error);
-        }
-      });
-    });
-    if (typeof response.default_probability !== "number") {
-      throw new Error("AI model worker returned no prediction");
-    }
-
-    return {
-      default_probability: response.default_probability,
-      risk_level: riskLevelFor(response.default_probability),
-      model_version: response.model_version || modelVersion,
-      demo: false,
-    };
-  } catch (error) {
-    const probability = demoProbability(features);
-    console.error("AI loan scoring fell back to demo mode:", error);
-    return {
-      default_probability: probability,
-      risk_level: riskLevelFor(probability),
-      model_version: "demo-fallback",
-      demo: true,
-    };
+  await waitForWorker();
+  if (workerStatus !== "ready") {
+    throw new Error(`${workerError}. Train a supported loan-risk model first.`);
   }
+
+  const response = await new Promise<WorkerResponse>((resolve, reject) => {
+    pendingRequests.push({ resolve, reject });
+    worker.stdin.write(`${JSON.stringify(features)}\n`, (error) => {
+      if (error) {
+        const pending = pendingRequests.pop();
+        pending?.reject(error);
+      }
+    });
+  });
+  if (typeof response.default_probability !== "number" || !response.predicted_outcome) {
+    throw new Error("AI model worker returned no loan-risk prediction");
+  }
+
+  const isCustomLoan = Object.prototype.hasOwnProperty.call(features, "amount_usdc");
+  return {
+    default_probability: response.default_probability,
+    predicted_outcome: response.predicted_outcome,
+    model_version: response.model_version || modelVersion,
+    decision_threshold: response.decision_threshold ?? 0.5,
+    dataset: isCustomLoan ? "Synthetic custom loan risk model" : "UCI Default of Credit Card Clients",
+    research_demo: true,
+  };
+}
+
+export async function predictCreditDefaultRisk(features: CreditDefaultFeatures) {
+  return predictLoanRisk(features as LoanRiskFeatures);
 }

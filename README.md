@@ -7,7 +7,7 @@ CryptoPay is a Next.js payment and lending dApp with an Express API, PostgreSQL 
 - Node.js 18 or newer with npm
 - Docker Desktop, for the local PostgreSQL database
 - MetaMask, if you want to connect a wallet
-- Python, only if you want to retrain the optional loan-risk model
+- Python, only if you want to run the optional AI benchmark evaluations
 
 If the repository is private, a teammate must have GitHub access before cloning it.
 
@@ -97,17 +97,46 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). In MetaMask, add the local network with RPC `http://127.0.0.1:8545` and chain ID `1337`. Import only a disposable account printed by the local Hardhat node.
 
-## Optional: Retrain the Loan-Risk Model
+## AI Model Benchmarks
 
-From the repository root:
+The project has two independent research/demo evaluations. Downloaded datasets and trained artifacts are local-only and excluded by `.gitignore`.
 
-```powershell
-cd backend
-python -m pip install -r scripts/requirements.txt
-python scripts/train-loan-model.py
+### Identity-document OCR
+
+The scanner uses Tesseract.js locally in the browser. It extracts editable text fields; it does not verify that an ID is genuine. The benchmark evaluator uses the [MIDV-500 identity-document dataset](https://arxiv.org/abs/1807.05786), which is not Aadhaar/PAN-specific. Review the dataset's access and reuse terms before downloading it. Do not use real customer IDs for this demo.
+
+Create development and test JSONL manifests under `backend/scripts/data/midv500/`, with one sampled image per row. Each path is relative to its manifest, and a document/video ID must appear in only one split:
+
+```json
+{"image":"frames/clip001/frame.jpg","document_id":"clip001","expected_text":"sample ground truth text"}
 ```
 
-The backend can start without retraining; this is only needed to regenerate the local model artifacts.
+Run the held-out evaluator from the repository root:
+
+```powershell
+node backend/scripts/evaluate-document-ocr.mjs --dev backend/scripts/data/midv500/dev.jsonl --test backend/scripts/data/midv500/test.jsonl
+```
+
+It writes aggregate exact-match accuracy, normalized CER/WER, and word precision/recall/F1 to `backend/scripts/ocr_metrics.json`. It does not save per-image OCR output.
+
+### Credit-default prediction
+
+The app's research/demo model uses the [UCI Default of Credit Card Clients](https://archive.ics.uci.edu/dataset/350/default+of+credit+card+clients) dataset (30,000 rows, CC BY 4.0, DOI: 10.24432/C55S3H). The trainer downloads its 5.3 MB CSV automatically when it is missing and stores it under the ignored `backend/scripts/data/` folder. The six prediction inputs summarize credit limit, age, payment status, bills, and payments; the model predicts next-month default for this benchmark population only.
+
+Create or activate a Python environment, install the model dependencies, then train:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend/scripts/requirements.txt
+python backend/scripts/train-credit-default-model.py
+```
+
+The trainer uses stratified train, validation, and held-out test splits, tunes the decision threshold on validation data, and writes the model plus metrics under the ignored `backend/scripts/model-artifacts/` directory. The backend can start without these artifacts, but credit-default predictions and metrics remain unavailable until training has completed; it does not fall back to synthetic predictions. The legacy Home Credit installment trainer is separate and is not required by the app.
+
+### Interpretation
+
+These are benchmark results, not performance on CryptoPay users or Polygon transactions, and are not lending decisions. The UCI dataset represents Taiwanese credit-card clients; MIDV-500 is not an Indian-ID benchmark. Local Hardhat transactions are integration fixtures only. Report the dataset, split, target, and limitations with every metric.
 
 ## Project Layout
 

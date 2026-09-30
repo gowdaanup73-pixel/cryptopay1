@@ -46,11 +46,11 @@ export default function OnRampButton({ product, onSuccess }) {
         throw new Error(data.error || "Failed to generate fiat checkout");
       }
 
-      toast.success(`Redirecting to Mudrex gateway (₹${data.requiredINR})`, { id: toastId });
+      toast.success(`Opening demo checkout (₹${data.requiredINR})`, { id: toastId });
 
-      // Mudrex returns a hosted checkout URL
       if (data.redirect_url) {
-        window.location.href = data.redirect_url;
+        const checkoutUrl = new URL(data.redirect_url, window.location.origin);
+        window.location.href = checkoutUrl.toString();
       }
       
       if (onSuccess) onSuccess(data);

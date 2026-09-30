@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useRouter } from "next/router";
 import { motion, AnimatePresence } from "framer-motion";
-import { FiCreditCard, FiLock, FiShield, FiCheckCircle, FiArrowLeft, FiLoader } from "react-icons/fi";
+import { FiShield, FiCheckCircle, FiArrowLeft, FiLoader } from "react-icons/fi";
 import toast, { Toaster } from "react-hot-toast";
 import Head from "next/head";
 
@@ -11,72 +11,42 @@ export default function FiatCheckout() {
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvc, setCvc] = useState("");
   const [name, setName] = useState("");
-
-  // Fire SMS once when the checkout page opens
-  const smsSentRef = useRef(false);
-  useEffect(() => {
-    if (!order || smsSentRef.current) return;
-    smsSentRef.current = true;
-
-    fetch("/api/notify-checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order, amount, currency, wallet }),
-    }).catch((err) => console.error("[Notify SMS Error]:", err));
-  }, [order]);
-
-  const formatCardNumber = (value) => {
-    const v = value.replace(/\s+/g, "").replace(/[^0-9]/gi, "");
-    const matches = v.match(/\d{4,16}/g);
-    const match = (matches && matches[0]) || "";
-    const parts = [];
-    for (let i = 0, len = match.length; i < len; i += 4) {
-      parts.push(match.substring(i, i + 4));
-    }
-    if (parts.length) return parts.join(" ");
-    return value;
-  };
+  const [smsStatus, setSmsStatus] = useState(null);
 
   const handlePay = async (e) => {
     e.preventDefault();
-    if (cardNumber.length < 19 || expiry.length < 5 || cvc.length < 3 || !name) {
-      toast.error("Please fill in all card details correctly.");
+    if (!name.trim()) {
+      toast.error("Enter the cardholder name to continue.");
       return;
     }
 
     setLoading(true);
-
-    // Simulate network delay for banking verification
-    setTimeout(async () => {
-      try {
-        // Trigger the webhook internally to simulate Mudrex/Stripe success
-        await fetch("/api/onramp/webhook", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            order_id: order,
-            status: "COMPLETED",
-          })
-        });
-
-        setSuccess(true);
-        toast.success("Payment Successful! Funds routed to Merchant.");
-
-        // Redirect back to home/dashboard after 3 seconds
-        setTimeout(() => {
-          router.push("/");
-        }, 3000);
-
-      } catch (err) {
-        toast.error("Payment failed to process");
-      } finally {
-        setLoading(false);
+    try {
+      const response = await fetch("/api/notify-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order, amount, currency, wallet }),
+      });
+      const notification = await response.json();
+      if (!response.ok && !notification.reason) {
+        throw new Error("Checkout notification request failed.");
       }
-    }, 2000);
+      setSmsStatus(notification);
+      if (notification.sent) {
+        toast.success("Twilio accepted the checkout alert.");
+      } else {
+        toast.error(`Checkout alert was not accepted: ${notification.reason || "Twilio error"}`);
+      }
+      setSuccess(true);
+    } catch (error) {
+      const failedStatus = { sent: false, reason: error.message || "Could not reach the notification service" };
+      setSmsStatus(failedStatus);
+      toast.error(failedStatus.reason);
+      setSuccess(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -144,50 +114,9 @@ export default function FiatCheckout() {
                     />
                   </div>
 
-                  <div>
-                    <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 block">Card Number</label>
-                    <div className="relative">
-                      <FiCreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-                      <input 
-                        type="text"
-                        placeholder="0000 0000 0000 0000"
-                        maxLength="19"
-                        value={cardNumber}
-                        onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
-                        className="w-full bg-black/30 border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white font-mono placeholder-gray-600 focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 block">Expiry Date</label>
-                      <input 
-                        type="text"
-                        placeholder="MM/YY"
-                        maxLength="5"
-                        value={expiry}
-                        onChange={(e) => {
-                          let v = e.target.value.replace(/\D/g, "");
-                          if (v.length > 2) v = `${v.slice(0, 2)}/${v.slice(2, 4)}`;
-                          setExpiry(v);
-                        }}
-                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-mono placeholder-gray-600 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 block">CVC</label>
-                      <input 
-                        type="text"
-                        placeholder="123"
-                        maxLength="4"
-                        value={cvc}
-                        onChange={(e) => setCvc(e.target.value.replace(/\D/g, ""))}
-                        className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white font-mono placeholder-gray-600 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all"
-                      />
-                    </div>
-                  </div>
                 </div>
+
+                <p className="text-xs text-amber-300">Demo checkout only. No card details are collected and no payment is processed.</p>
 
                 <motion.button
                   whileHover={{ scale: 1.02 }}
@@ -199,7 +128,7 @@ export default function FiatCheckout() {
                   <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
                   <div className="relative flex items-center justify-center space-x-2">
                     {loading ? (
-                      <><FiLoader className="w-5 h-5 animate-spin" /> <span>Encrypting...</span></>
+                      <><FiLoader className="w-5 h-5 animate-spin" /> <span>Sending alert...</span></>
                     ) : (
                       <><span>Pay Now</span></>
                     )}
@@ -217,9 +146,11 @@ export default function FiatCheckout() {
                   <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping"></div>
                   <FiCheckCircle className="w-10 h-10 text-blue-400" />
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Payment Complete!</h2>
+                <h2 className="text-2xl font-bold text-white mb-2">Demo checkout complete</h2>
                 <p className="text-blue-400/80 mb-8 max-w-[250px] mx-auto text-sm">
-                  {amount} {currency} has been successfully converted to USDC and delivered to the merchant.
+                  {smsStatus?.sent
+                    ? "Twilio accepted the checkout alert. No card payment was processed."
+                    : `Twilio did not accept the checkout alert: ${smsStatus?.reason || "unknown error"}. No card payment was processed.`}
                 </p>
                 <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
                   <motion.div 

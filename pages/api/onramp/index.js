@@ -43,12 +43,12 @@ export default async function handler(req, res) {
       console.error("Supabase Insertion Error:", dbError);
     }
 
-    // 4. Return success — SMS is sent when checkout page opens, not here
+    // 4. Return the local demo checkout URL
     return res.status(200).json({
       success: true,
       orderId: mudrexOrderId,
       requiredINR: requiredINR,
-      redirect_url: redirectUrl
+      redirect_url: redirectUrl,
     });
 
   } catch (error) {

@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     // GET
     // ──────────────────────────────────────────────────────
     if (req.method === "GET") {
-      const { borrower, id, simulate, loanId } = req.query;
+      const { borrower, farmer, id, simulate, loanId } = req.query;
 
       // Demo escrow simulation
       if (simulate === "true" && loanId) {

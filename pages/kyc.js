@@ -26,6 +26,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { ethers } from "ethers";
 import Layout from "../components/Layout";
+import DocScanner from "../components/DocScanner";
 import { contractService } from "../services/contract";
 import { pinataService } from "../services/pinata";
 import {
@@ -1384,6 +1385,7 @@ const KYCManagement = () => {
 // Enhanced KYC Submit Modal Component
 const KYCSubmitModal = ({ isOpen, onClose, onSubmit }) => {
   const [documents, setDocuments] = useState([]);
+  const [showDocScanner, setShowDocScanner] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
   const [aadhaarNumber, setAadhaarNumber] = useState("");
@@ -1417,6 +1419,28 @@ const KYCSubmitModal = ({ isOpen, onClose, onSubmit }) => {
       }
       return filtered;
     });
+  };
+
+  const handleOcrConfirmed = ({ docType, fields }) => {
+    if (fields.name) setFullName(fields.name);
+    if (docType === "pan" && fields.idNumber) setPanNumber(fields.idNumber.toUpperCase());
+    if (docType === "aadhaar" && fields.idNumber) {
+      setAadhaarNumber(formatAadhaar(fields.idNumber));
+      setAadhaarValidation(isValidAadhaar(fields.idNumber));
+    }
+
+    if (fields.dob) {
+      const yearFirst = fields.dob.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+      const dayFirst = fields.dob.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+      if (yearFirst) {
+        setDob(`${yearFirst[1]}-${yearFirst[2].padStart(2, "0")}-${yearFirst[3].padStart(2, "0")}`);
+      } else if (dayFirst) {
+        setDob(`${dayFirst[3]}-${dayFirst[2].padStart(2, "0")}-${dayFirst[1].padStart(2, "0")}`);
+      }
+    }
+
+    setShowDocScanner(false);
+    toast("OCR filled matching fields. Review them and upload documents separately.", { icon: "ℹ️" });
   };
 
   const handleSubmit = async (e) => {
@@ -1523,6 +1547,28 @@ const KYCSubmitModal = ({ isOpen, onClose, onSubmit }) => {
                 >
                   <FiX className="w-5 h-5" />
                 </motion.button>
+              </div>
+
+              <div className="mb-5">
+                {showDocScanner ? (
+                  <DocScanner
+                    onDataConfirmed={handleOcrConfirmed}
+                    onClose={() => setShowDocScanner(false)}
+                  />
+                ) : (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowDocScanner(true)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-blue-400/25 bg-blue-400/10 px-3 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-400/15"
+                    >
+                      <FiFileText className="h-4 w-4" /> Scan ID with local OCR
+                    </button>
+                    <p className="mt-2 text-xs text-gray-400">
+                      OCR runs in this browser and only fills editable fields. It does not verify authenticity; review every value. Submitting KYC documents uses the existing IPFS upload flow.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-6">

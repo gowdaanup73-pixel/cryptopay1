@@ -3,6 +3,7 @@
 // Polygon Mainnet production integration
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
+import { sendMerchantSms } from "../../../lib/sendMerchantSms";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -189,6 +190,11 @@ export default async function handler(req, res) {
       console.error("[supabase] fiat_offramps insert error:", dbError);
     }
 
+    const shortWallet = `${userWallet.slice(0, 6)}...${userWallet.slice(-4)}`;
+    const notification = await sendMerchantSms(
+      `New bank withdrawal request: ${amount} ${token} to bank account ending ${userBankAccount.slice(-4)}; order ${mudrexOrderId}; wallet ${shortWallet}.`
+    );
+
     // ── 4. Return success response ──────────────────────────────
     return res.status(200).json({
       success: true,
@@ -198,6 +204,7 @@ export default async function handler(req, res) {
       amount,
       status: "initiated",
       eta: "24h",
+      notification,
       ...(redirectUrl ? { redirect_url: redirectUrl } : {}),
     });
 

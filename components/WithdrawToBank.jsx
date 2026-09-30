@@ -76,7 +76,11 @@ export default function WithdrawToBank({ usdcBalance = 0, usdtBalance = 0 }) {
       if (!res.ok) throw new Error(data.error || "Off-ramp failed");
 
       setResult(data);
-      toast.success("Withdrawal initiated! 🎉 INR on the way.");
+      if (data.notification?.sent) {
+        toast.success("Withdrawal request submitted; merchant SMS accepted.");
+      } else {
+        toast.error(`Withdrawal request submitted, but merchant SMS failed: ${data.notification?.reason || "unknown Twilio error"}`);
+      }
 
     } catch (err) {
       setError(err.message);
@@ -372,8 +376,13 @@ export default function WithdrawToBank({ usdcBalance = 0, usdtBalance = 0 }) {
                     Withdrawal Initiated!
                   </h3>
                   <p style={{ color: "#9ca3af", fontSize: "14px", marginBottom: "24px" }}>
-                    You're receiving approximately{" "}
+                    You&apos;re receiving approximately{" "}
                     <span style={{ color: "#10b981", fontWeight: 700 }}>₹{estimatedINR}</span>
+                  </p>
+                  <p style={{ color: result.notification?.sent ? "#6ee7b7" : "#fcd34d", fontSize: "12px", marginBottom: "20px" }}>
+                    {result.notification?.sent
+                      ? "Twilio accepted the merchant notification request."
+                      : `Merchant SMS was not accepted: ${result.notification?.reason || "unknown Twilio error"}`}
                   </p>
 
                   {/* Status tracker */}

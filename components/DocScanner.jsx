@@ -1,5 +1,5 @@
 // components/DocScanner.jsx
-// Google Vision OCR scanner widget for KYC document scanning
+// Browser-local OCR scanner widget for KYC document scanning
 // Sits inside the KYC submit modal — user uploads doc, clicks Scan, fields auto-fill
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,6 +16,24 @@ const DOC_TYPES = [
   { id: "generic",  label: "Other Document",       flag: "📄", hint: "Any ID proof" },
 ];
 
+function extractDocumentFields(text, docType) {
+  const name = text.match(/(?:full\s+)?name\s*[:\-]\s*([^\r\n]+)/i)?.[1]?.trim() || "";
+  const dateOfBirth = text.match(
+    /(?:date\s+of\s+birth|dob|birth\s+date)\s*[:\-]?\s*(\d{1,4}[./-]\d{1,2}[./-]\d{1,4})/i
+  )?.[1] || "";
+  const panNumber = text.match(/\b[A-Z]{5}\d{4}[A-Z]\b/i)?.[0]?.toUpperCase() || "";
+  const aadhaarNumber = text.match(/(?:\d[\s-]*){12}/)?.[0]?.replace(/\D/g, "") || "";
+  const passportNumber = text.match(/\b[A-Z]\d{7}\b/i)?.[0]?.toUpperCase() || "";
+
+  let idNumber = "";
+  if (docType === "aadhaar") idNumber = aadhaarNumber;
+  else if (docType === "pan") idNumber = panNumber;
+  else if (docType === "passport") idNumber = passportNumber;
+  else idNumber = panNumber || aadhaarNumber || passportNumber;
+
+  return { name, dob: dateOfBirth, idNumber };
+}
+
 export default function DocScanner({ onDataConfirmed, onClose }) {
   const [step, setStep] = useState("choose"); // choose | upload | scanning | result | error
   const [docType, setDocType] = useState(null);
@@ -25,6 +43,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
   const [editedFields, setEditedFields] = useState({});
   const [errorMsg, setErrorMsg] = useState("");
   const [confidence, setConfidence] = useState(0);
+  const [scanProgress, setScanProgress] = useState(0);
   const fileRef = useRef(null);
 
   // ── File selection ──────────────────────────────────────────────────────────
@@ -59,35 +78,32 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
     setStep("scanning");
     setErrorMsg("");
 
+    let worker;
     try {
-      const formData = new FormData();
-      formData.append("image", imageFile);
-      formData.append("docType", docType);
-
-      const res = await fetch("/api/kyc/scan-document", {
-        method: "POST",
-        body: formData,
+      const { createWorker } = await import("tesseract.js");
+      worker = await createWorker("eng", 1, {
+        logger: (message) => {
+          if (message.status === "recognizing text") {
+            setScanProgress(Math.round(message.progress * 100));
+          }
+        },
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Scan failed");
+      const { data } = await worker.recognize(imageFile);
+      if (!data.text.trim()) {
+        throw new Error("No text was found. Try a clearer image.");
       }
 
-      if (!data.success) {
-        setErrorMsg(data.error || "Could not extract text from this image.");
-        setStep("upload");
-        return;
-      }
-
-      setScanResult(data);
-      setEditedFields(data.fields || {});
-      setConfidence(data.confidence || 0);
+      const fields = extractDocumentFields(data.text, docType);
+      setScanResult({ complete: true });
+      setEditedFields(fields);
+      setConfidence(Math.round(data.confidence || 0));
       setStep("result");
     } catch (err) {
-      setErrorMsg(err.message || "Scan request failed.");
+      setErrorMsg(err.message || "Local OCR failed to scan this image.");
       setStep("upload");
+    } finally {
+      if (worker) await worker.terminate();
+      setScanProgress(0);
     }
   };
 
@@ -96,8 +112,6 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
     onDataConfirmed({
       docType,
       fields: editedFields,
-      rawText: scanResult?.rawText,
-      imageFile,
       confidence,
     });
   };
@@ -125,7 +139,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
               AI Document Scanner
             </div>
             <div style={{ fontSize:12, color:"#6366f1" }}>
-              Powered by Google Vision
+              OCR runs locally in your browser
             </div>
           </div>
         </div>
@@ -147,7 +161,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
       {step === "choose" && (
         <div>
           <p style={{ color:"#94a3b8", fontSize:14, marginBottom:16 }}>
-            Select your document type and we'll extract your details automatically.
+            Select your document type and we&apos;ll extract your details automatically.
           </p>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:10 }}>
             {DOC_TYPES.map((d) => (
@@ -220,7 +234,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
           <input
             ref={fileRef}
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="image/jpeg,image/png,image/webp,image/bmp"
             style={{ display:"none" }}
             onChange={(e) => handleFileSelect(e.target.files[0])}
           />
@@ -273,7 +287,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
             Scanning document…
           </div>
           <div style={{ color:"#6b7280", fontSize:13, marginTop:8 }}>
-            Google Vision is extracting text from your image
+            Extracting text on this device: {scanProgress}%
           </div>
           {/* Scanning progress dots */}
           <div style={{ display:"flex", justifyContent:"center", gap:6, marginTop:16 }}>
@@ -297,7 +311,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
             display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16,
           }}>
             <span style={{ color:"#e2e8f0", fontWeight:700 }}>
-              ✅ Scan Complete
+              OCR complete. Review and correct the fields below.
             </span>
             <span style={{
               padding:"4px 12px", borderRadius:20,
@@ -307,7 +321,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
               color: confidence >= 66 ? "#60a5fa" : "#eab308",
               fontSize:13, fontWeight:700,
             }}>
-              {confidence}% confidence
+              {confidence}% OCR confidence
             </span>
           </div>
 
@@ -316,7 +330,7 @@ export default function DocScanner({ onDataConfirmed, onClose }) {
               background:"rgba(234,179,8,0.1)", border:"1px solid rgba(234,179,8,0.3)",
               borderRadius:10, padding:12, marginBottom:16, color:"#fde68a", fontSize:13,
             }}>
-              ⚠️ Low confidence — review all fields carefully before confirming.
+              ⚠️ OCR confidence is low. This does not verify document authenticity; review every field.
             </div>
           )}
 

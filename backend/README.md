@@ -44,16 +44,13 @@ npm run dev
 Server starts at **http://localhost:4000**.  
 Health check: **http://localhost:4000/health**
 
-### AI loan risk model
+### AI model benchmarks
 
-Install the Python model dependencies and generate the local model artifacts before starting the backend:
+The project includes a local browser OCR scanner and a UCI credit-card default research model. See the root `README.md` for dataset details, attribution, and training commands. Dataset downloads under `scripts/data/` and generated model artifacts are Git-ignored.
 
-```bash
-python -m pip install -r scripts/requirements.txt
-python scripts/train-loan-model.py
-```
+Install Python dependencies from the repository root with `python -m pip install -r backend/scripts/requirements.txt` and run `python backend/scripts/train-credit-default-model.py`. The trainer fetches the small public UCI CSV if it is not already present. Set `PYTHON_EXECUTABLE` if the backend cannot find the interpreter used for training.
 
-The training script creates 1,000 synthetic records with a 20% default rate and writes the model, test metrics, confusion matrix, and feature importance under `scripts/`. The backend loads the model worker at startup. Set `PYTHON_EXECUTABLE` if Python is not available as `python` (Windows) or `python3` (other platforms). If the model cannot load, predictions are explicitly marked with `demo: true`.
+The backend exposes `POST /api/ai/credit-default-risk`, `GET /api/ai/credit-default-metrics`, and `GET /api/ai/ocr-metrics`. Predictions are benchmark demonstrations, not predictions for CryptoPay or Polygon users. There is no synthetic fallback when the trained model artifact is missing.
 
 ---
 
@@ -79,8 +76,9 @@ The training script creates 1,000 synthetic records with a 20% default rate and 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/ai/loan-risk` | Score loan default probability from loan features |
-| `GET` | `/api/ai/model-metrics` | Return evaluation metrics, confusion matrix, and feature importance |
+| `POST` | `/api/ai/credit-default-risk` | UCI research/demo prediction for next-month credit-card default |
+| `GET` | `/api/ai/credit-default-metrics` | UCI held-out metrics, confusion matrix, and feature importance |
+| `GET` | `/api/ai/ocr-metrics` | MIDV-500 OCR evaluation metrics |
 
 ---
 
